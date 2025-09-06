@@ -20,6 +20,7 @@ import {
     filter,
     fromEvent,
     interval,
+    merge,
     map,
     scan,
     switchMap,
@@ -45,8 +46,8 @@ const Constants = {
     PIPE_SPEED: 3,
     PIPE_SPAWN_DISTANCE: 250,
     GRAVITY: 0.5,
-    JUMP_VELOCITY: -8,
-    TICK_RATE_MS: 16,
+    JUMP_VELOCITY: -7,
+    TICK_RATE_MS: 30,
 } as const;
 
 // User input
@@ -90,6 +91,10 @@ const initialState: State = {
     score: 0,
     gameTime: 0,
 };
+
+/** Utility: clamp value to [min, max] */
+const clamp = (value: number, min: number, max: number): number =>
+    Math.max(min, Math.min(max, value));
 
 /**
  * Parses CSV content and converts it to pipe data
@@ -287,14 +292,11 @@ const render = (): ((s: State) => void) => {
 };
 
 export const state$ = (csvContents: string): Observable<State> => {
-    /** User input */
+    // keydown event
+    const key$ = fromEvent<KeyboardEvent>(document, "keydown");
+    const flap$ = key$.pipe(filter(({ code }) => code === "Space"));
 
-    const key$ = fromEvent<KeyboardEvent>(document, "keypress");
-    const fromKey = (keyCode: Key) =>
-        key$.pipe(filter(({ code }) => code === keyCode));
-
-    /** Determines the rate of time steps */
-    const tick$ = interval(Constants.TICK_RATE_MS);
+    const tick$ = interval(Constants.TICK_RATE_MS); // time step interval: 30ms
 
     // Parse pipe data from CSV
     const pipeData = parsePipeData(csvContents);
@@ -305,34 +307,52 @@ export const state$ = (csvContents: string): Observable<State> => {
         pipes: pipeData,
     };
 
-    return tick$.pipe(
-        scan((s: State) => {
-            // Update game time
-            const newGameTime = s.gameTime + 1;
+    type Reducer = (s: State) => State;
 
-            // Move pipes from right to left
-            const updatedPipes = s.pipes
-                .map(pipe => ({
-                    ...pipe,
-                    x: pipe.x - Constants.PIPE_SPEED,
-                }))
-                .filter(pipe => pipe.x > -Constants.PIPE_WIDTH); // Remove pipes that are off-screen
+    // Physics tick: gravity integration, position update, pipe scrolling.
+    const physics$: Observable<Reducer> = tick$.pipe(
+        map(
+            (): Reducer => (s: State) => {
+                const newVelocity = s.bird.velocity + Constants.GRAVITY;
+                const newY = s.bird.y + newVelocity;
 
-            // Log state for debugging
-            if (newGameTime % 60 === 0) {
-                // Log every second
-                console.log("Game state:", {
-                    gameTime: newGameTime,
-                    pipes: updatedPipes.length,
-                });
-            }
+                // Clamp bird within screen
+                const clampedY = clamp(
+                    newY,
+                    Birb.HEIGHT / 2,
+                    Viewport.CANVAS_HEIGHT - Birb.HEIGHT / 2,
+                );
 
-            return {
+                const updatedPipes = s.pipes
+                    .map(pipe => ({
+                        ...pipe,
+                        x: pipe.x - Constants.PIPE_SPEED,
+                    }))
+                    .filter(pipe => pipe.x > -Constants.PIPE_WIDTH);
+
+                return {
+                    ...s,
+                    gameTime: s.gameTime + 1,
+                    bird: { ...s.bird, y: clampedY, velocity: newVelocity },
+                    pipes: updatedPipes,
+                };
+            },
+        ),
+    );
+
+    // Flap: immediate upward velocity
+    const flapReducer$: Observable<Reducer> = flap$.pipe(
+        map(
+            (): Reducer => (s: State) => ({
                 ...s,
-                gameTime: newGameTime,
-                pipes: updatedPipes,
-            };
-        }, initialGameState),
+                bird: { ...s.bird, velocity: Constants.JUMP_VELOCITY },
+            }),
+        ),
+    );
+
+    // Accumulate: merge reducer streams and fold over time (scan)
+    return merge(physics$, flapReducer$).pipe(
+        scan((s, reducer) => reducer(s), initialGameState),
     );
 };
 
