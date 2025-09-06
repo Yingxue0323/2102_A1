@@ -40,8 +40,13 @@ const Birb = {
 } as const;
 
 const Constants = {
-    PIPE_WIDTH: 50,
-    TICK_RATE_MS: 500, // Might need to change this!
+    PIPE_WIDTH: 120,
+    PIPE_HEIGHT: 400,
+    PIPE_SPEED: 3,
+    PIPE_SPAWN_DISTANCE: 250,
+    GRAVITY: 0.5,
+    JUMP_VELOCITY: -8,
+    TICK_RATE_MS: 16,
 } as const;
 
 // User input
@@ -50,12 +55,63 @@ type Key = "Space";
 
 // State processing
 
+type Bird = Readonly<{
+    x: number;
+    y: number;
+    velocity: number;
+}>;
+
+type Pipe = Readonly<{
+    id: number;
+    x: number;
+    gapY: number;
+    gapHeight: number;
+    time: number;
+}>;
+
 type State = Readonly<{
     gameEnd: boolean;
+    bird: Bird;
+    pipes: readonly Pipe[];
+    lives: number;
+    score: number;
+    gameTime: number;
 }>;
 
 const initialState: State = {
     gameEnd: false,
+    bird: {
+        x: Viewport.CANVAS_WIDTH * 0.3,
+        y: Viewport.CANVAS_HEIGHT / 2,
+        velocity: 0,
+    },
+    pipes: [],
+    lives: 3,
+    score: 0,
+    gameTime: 0,
+};
+
+/**
+ * Parses CSV content and converts it to pipe data
+ * @param csvContent CSV content string
+ * @returns Array of pipe data
+ */
+const parsePipeData = (csvContent: string): readonly Pipe[] => {
+    const lines = csvContent.trim().split("\n");
+    const pipes: Pipe[] = [];
+
+    for (let i = 1; i < lines.length; i++) {
+        const [gapY, gapHeight, time] = lines[i].split(",").map(Number);
+        pipes.push({
+            id: i - 1,
+            x: Viewport.CANVAS_WIDTH + (i - 1) * Constants.PIPE_SPAWN_DISTANCE,
+            gapY: gapY * Viewport.CANVAS_HEIGHT,
+            gapHeight: gapHeight * Viewport.CANVAS_HEIGHT,
+            time: time,
+        });
+    }
+
+    return pipes;
 };
 
 /**
@@ -129,6 +185,7 @@ const render = (): ((s: State) => void) => {
         "viewBox",
         `0 0 ${Viewport.CANVAS_WIDTH} ${Viewport.CANVAS_HEIGHT}`,
     );
+
     /**
      * Renders the current state to the canvas.
      *
@@ -137,40 +194,95 @@ const render = (): ((s: State) => void) => {
      * @param s Current state
      */
     return (s: State) => {
-        // Add birb to the main grid canvas
+        // Clear previous frame
+        svg.innerHTML = "";
+
+        // Add background image
+        const backgroundImg = createSvgElement(svg.namespaceURI, "image", {
+            href: "assets/bg.jpg",
+            x: "0",
+            y: "0",
+            width: `${Viewport.CANVAS_WIDTH}`,
+            height: `${Viewport.CANVAS_HEIGHT}`,
+            preserveAspectRatio: "xMidYMid slice",
+        });
+        svg.appendChild(backgroundImg);
+
+        // Render pipes
+        s.pipes.forEach(pipe => {
+            if (
+                pipe.x > -Constants.PIPE_WIDTH &&
+                pipe.x < Viewport.CANVAS_WIDTH + Constants.PIPE_WIDTH
+            ) {
+                // Calculate the pixel height of the current pipe's top and bottom parts
+                const topPipeHeight = Math.max(
+                    0,
+                    pipe.gapY - pipe.gapHeight / 2,
+                );
+                const bottomPipeY = pipe.gapY + pipe.gapHeight / 2;
+                const bottomPipeHeight = Math.max(
+                    0,
+                    Viewport.CANVAS_HEIGHT - bottomPipeY,
+                );
+
+                // Top pipe: grow from top to bottom
+                if (topPipeHeight > 0) {
+                    const topGroup = createSvgElement(svg.namespaceURI, "g");
+                    topGroup.setAttribute(
+                        "transform",
+                        `translate(${pipe.x}, ${topPipeHeight}) scale(1, -1)`,
+                    );
+                    const topImg = createSvgElement(svg.namespaceURI, "image", {
+                        href: "assets/pipe.png",
+                        x: "0",
+                        y: "0",
+                        width: `${Constants.PIPE_WIDTH}`,
+                        height: `${topPipeHeight}`,
+                        preserveAspectRatio: "none",
+                    });
+                    topGroup.appendChild(topImg);
+                    svg.appendChild(topGroup);
+                }
+
+                // Bottom pipe: grow from bottom to top
+                if (bottomPipeHeight > 0) {
+                    const bottomImg = createSvgElement(
+                        svg.namespaceURI,
+                        "image",
+                        {
+                            href: "assets/pipe.png",
+                            x: `${pipe.x}`,
+                            y: `${bottomPipeY}`,
+                            width: `${Constants.PIPE_WIDTH}`,
+                            height: `${bottomPipeHeight}`,
+                            preserveAspectRatio: "none",
+                        },
+                    );
+                    svg.appendChild(bottomImg);
+                }
+            }
+        });
+
+        // Add bird
         const birdImg = createSvgElement(svg.namespaceURI, "image", {
             href: "assets/birb.png",
-            x: `${Viewport.CANVAS_WIDTH * 0.3 - Birb.WIDTH / 2}`,
-            y: `${Viewport.CANVAS_HEIGHT / 2 - Birb.HEIGHT / 2}`,
+            x: `${s.bird.x - Birb.WIDTH / 2}`,
+            y: `${s.bird.y - Birb.HEIGHT / 2}`,
             width: `${Birb.WIDTH}`,
             height: `${Birb.HEIGHT}`,
         });
         svg.appendChild(birdImg);
 
-        // Draw a static pipe as a demonstration
-        const pipeGapY = 200; // vertical center of the gap
-        const pipeGapHeight = 100;
+        // Update UI
+        if (livesText) livesText.textContent = s.lives.toString();
+        if (scoreText) scoreText.textContent = s.score.toString();
 
-        // Top pipe
-        const pipeTop = createSvgElement(svg.namespaceURI, "rect", {
-            x: "150",
-            y: "0",
-            width: `${Constants.PIPE_WIDTH}`,
-            height: `${pipeGapY - pipeGapHeight / 2}`,
-            fill: "green",
-        });
-
-        // Bottom pipe
-        const pipeBottom = createSvgElement(svg.namespaceURI, "rect", {
-            x: "150",
-            y: `${pipeGapY + pipeGapHeight / 2}`,
-            width: `${Constants.PIPE_WIDTH}`,
-            height: `${Viewport.CANVAS_HEIGHT - (pipeGapY + pipeGapHeight / 2)}`,
-            fill: "green",
-        });
-
-        svg.appendChild(pipeTop);
-        svg.appendChild(pipeBottom);
+        // Show game over if needed
+        if (s.gameEnd) {
+            show(gameOver);
+        } else {
+            hide(gameOver);
+        }
     };
 };
 
@@ -184,7 +296,44 @@ export const state$ = (csvContents: string): Observable<State> => {
     /** Determines the rate of time steps */
     const tick$ = interval(Constants.TICK_RATE_MS);
 
-    return tick$.pipe(scan((s: State) => ({ gameEnd: false }), initialState));
+    // Parse pipe data from CSV
+    const pipeData = parsePipeData(csvContents);
+
+    // Initialize state with pipe data
+    const initialGameState: State = {
+        ...initialState,
+        pipes: pipeData,
+    };
+
+    return tick$.pipe(
+        scan((s: State) => {
+            // Update game time
+            const newGameTime = s.gameTime + 1;
+
+            // Move pipes from right to left
+            const updatedPipes = s.pipes
+                .map(pipe => ({
+                    ...pipe,
+                    x: pipe.x - Constants.PIPE_SPEED,
+                }))
+                .filter(pipe => pipe.x > -Constants.PIPE_WIDTH); // Remove pipes that are off-screen
+
+            // Log state for debugging
+            if (newGameTime % 60 === 0) {
+                // Log every second
+                console.log("Game state:", {
+                    gameTime: newGameTime,
+                    pipes: updatedPipes.length,
+                });
+            }
+
+            return {
+                ...s,
+                gameTime: newGameTime,
+                pipes: updatedPipes,
+            };
+        }, initialGameState),
+    );
 };
 
 // The following simply runs your main function on window load.  Make sure to leave it in place.
