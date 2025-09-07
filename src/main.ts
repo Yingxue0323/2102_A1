@@ -25,6 +25,11 @@ import {
     scan,
     switchMap,
     take,
+    startWith,
+    withLatestFrom,
+    share,
+    EMPTY,
+    of,
 } from "rxjs";
 import { fromFetch } from "rxjs/fetch";
 
@@ -80,6 +85,7 @@ type State = Readonly<{
     gameEnd: boolean;
     won: boolean;
     bird: Bird;
+    ghosts?: readonly Bird[]; // all ghost birds (non-interactive)
     pipes: readonly Pipe[];
     lives: number;
     score: number;
@@ -295,6 +301,21 @@ const render = (): ((s: State) => void) => {
             }
         });
 
+        // Add ghosts (semi-transparent, non-interactive)
+        if (s.ghosts && s.ghosts.length) {
+            s.ghosts.forEach(g => {
+                const ghostImg = createSvgElement(svg.namespaceURI, "image", {
+                    href: "assets/birb.png",
+                    x: `${s.bird.x - Birb.WIDTH / 2}`,
+                    y: `${g.y - Birb.HEIGHT / 2}`,
+                    width: `${Birb.WIDTH}`,
+                    height: `${Birb.HEIGHT}`,
+                    opacity: "0.35",
+                });
+                svg.appendChild(ghostImg);
+            });
+        }
+
         // Add bird
         const birdImg = createSvgElement(svg.namespaceURI, "image", {
             href: "assets/birb.png",
@@ -371,6 +392,10 @@ export const state$ = (csvContents: string): Observable<State> => {
     const flap$ = key$.pipe(filter(({ code }) => code === "Space"));
 
     const tick$ = interval(Constants.TICK_RATE_MS); // time step interval: 30ms
+    const tickIndex$ = tick$.pipe(
+        scan(i => i + 1, 0),
+        startWith(0),
+    );
 
     // Parse pipe data from CSV
     const pipeData = parsePipeData(csvContents);
@@ -485,6 +510,20 @@ export const state$ = (csvContents: string): Observable<State> => {
 
     // Flap: immediate upward velocity
     const flapReducer$: Observable<Reducer> = flap$.pipe(
+        withLatestFrom(tickIndex$),
+        share(),
+        map(([_, __]) => undefined as unknown as never), // placeholder to keep types simple
+    );
+
+    // Ghost support: capture current run's flap ticks
+    const currentRunFlapTicks$ = flap$.pipe(
+        withLatestFrom(tickIndex$),
+        map(([_, i]) => i),
+        share(),
+    );
+
+    // Player flap reducer (separate from ghost capture)
+    const playerFlapReducer$: Observable<Reducer> = flap$.pipe(
         map(
             (): Reducer => (s: State) =>
                 s.gameEnd
@@ -500,9 +539,87 @@ export const state$ = (csvContents: string): Observable<State> => {
     );
 
     // Accumulate: merge reducer streams and fold over time (scan)
-    return merge(physics$, flapReducer$).pipe(
+    // Merge player reducers (physics + player flaps)
+    const player$ = merge(physics$, playerFlapReducer$).pipe(
         scan((s, reducer) => reducer(s), initialGameState),
     );
+
+    // Build ghost flap streams from all previous runs in this app session
+    const allTickLists = (window as any).__allRunFlapTicksArrays as
+        | number[][]
+        | undefined;
+    const ghostStreams: Observable<{ idx: number }>[] = (
+        allTickLists || []
+    ).map((list, idx) =>
+        tickIndex$.pipe(
+            filter(i => list.includes(i)),
+            map(() => ({ idx })),
+        ),
+    );
+    const ghostFlap$ = ghostStreams.length ? merge(...ghostStreams) : EMPTY;
+    const hasGhost = ghostStreams.length > 0;
+
+    // Ghost state: integrate the same physics, driven by ghostFlap$ impulses
+    const ghostReducerPhysics$: Observable<Reducer> = hasGhost
+        ? tick$.pipe(
+              map(
+                  (): Reducer => (s: State) => {
+                      const ghosts = s.ghosts ?? [];
+                      const nextGhosts = ghosts.map(g => {
+                          const v = g.velocity + Constants.GRAVITY;
+                          const y = clamp(
+                              g.y + v,
+                              Birb.HEIGHT / 2,
+                              Viewport.CANVAS_HEIGHT - Birb.HEIGHT / 2,
+                          );
+                          return { ...g, y, velocity: v } as Bird;
+                      });
+                      return { ...s, ghosts: nextGhosts };
+                  },
+              ),
+          )
+        : EMPTY;
+
+    const ghostReducerFlap$: Observable<Reducer> = hasGhost
+        ? ghostFlap$.pipe(
+              map(({ idx }) => (s: State) => {
+                  const needed = allTickLists ? allTickLists.length : 0;
+                  const baseGhosts: Bird[] =
+                      s.ghosts && s.ghosts.length
+                          ? ([...s.ghosts] as Bird[])
+                          : Array.from({ length: needed }, () => ({
+                                x: s.bird.x,
+                                y: Viewport.CANVAS_HEIGHT / 2,
+                                velocity: 0,
+                            }));
+                  if (idx >= 0 && idx < baseGhosts.length) {
+                      baseGhosts[idx] = {
+                          ...baseGhosts[idx],
+                          velocity: Constants.JUMP_VELOCITY,
+                      };
+                  }
+                  return { ...s, ghosts: baseGhosts };
+              }),
+          )
+        : EMPTY;
+
+    const withGhost$ = merge(
+        physics$,
+        playerFlapReducer$,
+        ghostReducerPhysics$,
+        ghostReducerFlap$,
+    ).pipe(scan((s, reducer) => reducer(s), initialGameState));
+
+    // Expose current run flap ticks as an array for the next session (accumulate all runs)
+    const ticksSub: number[] = [];
+    currentRunFlapTicks$.subscribe(t => ticksSub.push(t));
+    const allRuns: number[][] =
+        ((window as any).__allRunFlapTicksArrays as number[][]) || [];
+    // When this observable completes (session will end via outer switchMap cancel),
+    // push the collected ticks to the global array on game end path (handled in bootstrap)
+    (window as any).__currentRunFlapTicksArray = ticksSub;
+
+    return withGhost$;
 };
 
 // The following simply runs your main function on window load.  Make sure to leave it in place.
@@ -565,6 +682,22 @@ if (typeof window !== "undefined") {
     };
     drawStartScreen();
 
+    // splash: can be skipped by the skip button, 6s then hide
+    const splash = document.getElementById("splash") as HTMLElement;
+    const game = document.getElementById("main") as HTMLElement;
+    const endSplash = () => {
+        if (splash) splash.style.display = "none";
+        if (game) game.style.display = "block";
+    };
+    const splashTimeout = window.setTimeout(endSplash, 6000);
+    const skipBtn = document.getElementById("skipBtn") as HTMLElement | null;
+    if (skipBtn) {
+        skipBtn.addEventListener("click", () => {
+            clearTimeout(splashTimeout);
+            endSplash();
+        });
+    }
+
     // Streams: start once, restart many times
     const start$ = fromEvent<MouseEvent>(svgEl, "mousedown").pipe(
         filter(e => (e.target as Element).id === "startBtn"),
@@ -575,10 +708,43 @@ if (typeof window !== "undefined") {
     );
     const session$ = merge(start$, restart$);
 
+    // Render subscription - pure render only
+    csv$.pipe(
+        switchMap(contents => session$.pipe(switchMap(() => state$(contents)))),
+    ).subscribe(render());
+
+    // Append current run ticks once per session end (dedup to avoid多次追加)
     csv$.pipe(
         switchMap(contents =>
-            // On start or restart - (re)start a new session; switchMap cancels old one
-            session$.pipe(switchMap(() => state$(contents))),
+            session$.pipe(
+                switchMap(() =>
+                    state$(contents).pipe(
+                        filter(s => s.gameEnd),
+                        take(1),
+                        map(
+                            () =>
+                                (window as any)
+                                    .__currentRunFlapTicksArray as number[],
+                        ),
+                        filter(arr => Array.isArray(arr) && arr.length > 0),
+                    ),
+                ),
+            ),
         ),
-    ).subscribe(render());
+    ).subscribe(arr => {
+        const all = (window as any).__allRunFlapTicksArrays as
+            | number[][]
+            | undefined;
+        const exists =
+            all?.some(
+                old =>
+                    old.length === arr.length &&
+                    old.every((v, i) => v === arr[i]),
+            ) ?? false;
+        (window as any).__allRunFlapTicksArrays = exists
+            ? all
+            : all
+              ? [...all, arr]
+              : [arr];
+    });
 }
