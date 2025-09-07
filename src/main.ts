@@ -36,15 +36,15 @@ import { fromFetch } from "rxjs/fetch";
 /** Constants */
 
 const ASSETS = {
-    bg: new URL("../assets/bg.jpg", import.meta.url).href,
-    pipe: new URL("../assets/pipe.png", import.meta.url).href,
-    birb: new URL("../assets/birb.png", import.meta.url).href,
-    hp: new URL("../assets/-hp.png", import.meta.url).href,
-    start: new URL("../assets/start-btn.png", import.meta.url).href,
-    restart: new URL("../assets/restart.png", import.meta.url).href,
-    winning: new URL("../assets/winning.png", import.meta.url).href,
-    gameover: new URL("../assets/gameover.png", import.meta.url).href,
-    csv: new URL("../assets/map.csv", import.meta.url).href,
+    bg: new URL("../public/assets/bg.jpg", import.meta.url).href,
+    pipe: new URL("../public/assets/pipe.png", import.meta.url).href,
+    birb: new URL("../public/assets/birb.png", import.meta.url).href,
+    hp: new URL("../public/assets/-hp.png", import.meta.url).href,
+    start: new URL("../public/assets/start-btn.png", import.meta.url).href,
+    restart: new URL("../public/assets/restart.png", import.meta.url).href,
+    winning: new URL("../public/assets/winning.png", import.meta.url).href,
+    gameover: new URL("../public/assets/gameover.png", import.meta.url).href,
+    csv: new URL("../public/assets/map.csv", import.meta.url).href,
 };
 
 const Viewport = {
