@@ -565,21 +565,20 @@ if (typeof window !== "undefined") {
     };
     drawStartScreen();
 
-    // Observable: wait for clicking the start button
-    const click$ = fromEvent<MouseEvent>(svgEl, "mousedown").pipe(
+    // Streams: start once, restart many times
+    const start$ = fromEvent<MouseEvent>(svgEl, "mousedown").pipe(
         filter(e => (e.target as Element).id === "startBtn"),
         take(1),
     );
+    const restart$ = fromEvent<MouseEvent>(svgEl, "mousedown").pipe(
+        filter(e => (e.target as Element).id === "replayBtn"),
+    );
+    const session$ = merge(start$, restart$);
 
     csv$.pipe(
         switchMap(contents =>
-            // On click - start the game
-            click$.pipe(switchMap(() => state$(contents))),
+            // On start or restart - (re)start a new session; switchMap cancels old one
+            session$.pipe(switchMap(() => state$(contents))),
         ),
     ).subscribe(render());
-
-    // Replay listener: reload page when clicking replay button
-    fromEvent<MouseEvent>(svgEl, "mousedown")
-        .pipe(filter(e => (e.target as Element).id === "replayBtn"))
-        .subscribe(() => window.location.reload());
 }
