@@ -244,7 +244,7 @@ const render = (): ((s: State) => void) => {
 
         // Add background image
         const backgroundImg = createSvgElement(svg.namespaceURI, "image", {
-            href: "assets/bg.jpg",
+            href: "../assets/bg.jpg",
             x: "0",
             y: "0",
             width: `${Viewport.CANVAS_WIDTH}`,
@@ -278,7 +278,7 @@ const render = (): ((s: State) => void) => {
                         `translate(${pipe.x}, ${topPipeHeight}) scale(1, -1)`,
                     );
                     const topImg = createSvgElement(svg.namespaceURI, "image", {
-                        href: "assets/pipe.png",
+                        href: "../assets/pipe.png",
                         x: "0",
                         y: "0",
                         width: `${Constants.PIPE_WIDTH}`,
@@ -295,7 +295,7 @@ const render = (): ((s: State) => void) => {
                         svg.namespaceURI,
                         "image",
                         {
-                            href: "assets/pipe.png",
+                            href: "../assets/pipe.png",
                             x: `${pipe.x}`,
                             y: `${bottomPipeY}`,
                             width: `${Constants.PIPE_WIDTH}`,
@@ -317,7 +317,7 @@ const render = (): ((s: State) => void) => {
                         svg.namespaceURI,
                         "image",
                         {
-                            href: "assets/birb.png",
+                            href: "../assets/birb.png",
                             x: `${s.bird.x - Birb.WIDTH / 2}`,
                             y: `${g.y - Birb.HEIGHT / 2}`,
                             width: `${Birb.WIDTH}`,
@@ -331,7 +331,7 @@ const render = (): ((s: State) => void) => {
 
         // Add bird
         const birdImg = createSvgElement(svg.namespaceURI, "image", {
-            href: "assets/birb.png",
+            href: "../assets/birb.png",
             x: `${s.bird.x - Birb.WIDTH / 2}`,
             y: `${s.bird.y - Birb.HEIGHT / 2}`,
             width: `${Birb.WIDTH}`,
@@ -344,7 +344,7 @@ const render = (): ((s: State) => void) => {
             const hpW = 40;
             const hpH = 20;
             const dmgImg = createSvgElement(svg.namespaceURI, "image", {
-                href: "assets/-hp.png",
+                href: "../assets/-hp.png",
                 x: `${s.bird.x - hpW / 2}`,
                 y: `${s.bird.y - Birb.HEIGHT / 2 - hpH - 4}`,
                 width: `${hpW}`,
@@ -374,7 +374,9 @@ const render = (): ((s: State) => void) => {
             const goW = Math.floor(Viewport.CANVAS_WIDTH * 0.9);
             const goH = Math.floor(Viewport.CANVAS_HEIGHT * 0.8);
             const gameOverImg = createSvgElement(svg.namespaceURI, "image", {
-                href: s.won ? "assets/winning.png" : "assets/gameover.png",
+                href: s.won
+                    ? "../assets/winning.png"
+                    : "../assets/gameover.png",
                 x: `${(Viewport.CANVAS_WIDTH - goW) / 2}`,
                 y: `${Viewport.CANVAS_HEIGHT * 0.3 - goH / 2}`,
                 width: `${goW}`,
@@ -387,7 +389,7 @@ const render = (): ((s: State) => void) => {
             const rpW = Math.floor(Viewport.CANVAS_WIDTH * 0.8);
             const rpH = Math.floor(Viewport.CANVAS_HEIGHT * 0.15);
             const replayBtn = createSvgElement(svg.namespaceURI, "image", {
-                href: "assets/restart.png",
+                href: "../assets/restart.png",
                 x: `${(Viewport.CANVAS_WIDTH - rpW) / 2}`,
                 y: `${Viewport.CANVAS_HEIGHT * 0.75 - rpH / 2}`,
                 width: `${rpW}`,
@@ -702,7 +704,7 @@ if (typeof window !== "undefined") {
         if (!svgEl) return;
         svgEl.innerHTML = "";
         const bg = createSvgElement(svgEl.namespaceURI, "image", {
-            href: "assets/bg.jpg",
+            href: "../assets/bg.jpg",
             x: "0",
             y: "0",
             width: `${Viewport.CANVAS_WIDTH}`,
@@ -723,7 +725,7 @@ if (typeof window !== "undefined") {
         const w = 180;
         const h = 60;
         const startBtn = createSvgElement(svgEl.namespaceURI, "image", {
-            href: "assets/start-btn.png",
+            href: "../assets/start-btn.png",
             x: `${(Viewport.CANVAS_WIDTH - w) / 2}`,
             y: `${Viewport.CANVAS_HEIGHT * 0.5 - h / 2}`,
             width: `${w}`,
