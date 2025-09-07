@@ -46,10 +46,12 @@ const Constants = {
     PIPE_SPEED: 3,
     PIPE_SPAWN_DISTANCE: 250,
     GRAVITY: 0.5,
-    JUMP_VELOCITY: -7,
+    JUMP_VELOCITY: -5,
     TICK_RATE_MS: 30,
     /** Hit cooldown in ticks to prevent draining all lives in a single overlap */
     HIT_COOLDOWN_TICKS: 30,
+    /** How long to show the damage indicator after losing a life (ticks) */
+    DAMAGE_TICKS: 30,
 } as const;
 
 // User input
@@ -70,21 +72,26 @@ type Pipe = Readonly<{
     gapY: number;
     gapHeight: number;
     time: number;
+    scored?: boolean; // becomes true once the bird has passed this pipe pair
 }>;
 
 // FRP State: the single immutable source of truth that evolves over time
 type State = Readonly<{
     gameEnd: boolean;
+    won: boolean;
     bird: Bird;
     pipes: readonly Pipe[];
     lives: number;
     score: number;
     gameTime: number;
     hitCooldown: number; // ticks remaining until next life can be lost
+    totalPipes: number; // total number of pipe pairs in level
+    damageTicks: number; // ticks remaining to show -hp indicator
 }>;
 
 const initialState: State = {
     gameEnd: false,
+    won: false,
     bird: {
         x: Viewport.CANVAS_WIDTH * 0.3,
         y: Viewport.CANVAS_HEIGHT / 2,
@@ -95,6 +102,8 @@ const initialState: State = {
     score: 0,
     gameTime: 0,
     hitCooldown: 0,
+    totalPipes: 0,
+    damageTicks: 0,
 };
 
 /** Utility: clamp value to [min, max] */
@@ -296,11 +305,25 @@ const render = (): ((s: State) => void) => {
         });
         svg.appendChild(birdImg);
 
+        // Damage indicator above the bird when a life is lost
+        if (s.damageTicks > 0) {
+            const hpW = 40;
+            const hpH = 20;
+            const dmgImg = createSvgElement(svg.namespaceURI, "image", {
+                href: "assets/-hp.png",
+                x: `${s.bird.x - hpW / 2}`,
+                y: `${s.bird.y - Birb.HEIGHT / 2 - hpH - 4}`,
+                width: `${hpW}`,
+                height: `${hpH}`,
+            });
+            svg.appendChild(dmgImg);
+        }
+
         // Update UI
         if (livesText) livesText.textContent = s.lives.toString();
         if (scoreText) scoreText.textContent = s.score.toString();
 
-        // Game Over overlay with replay button
+        // Game Over / Win overlay with replay button
         if (s.gameEnd) {
             // Dim the scene
             const dimRect = createSvgElement(svg.namespaceURI, "rect", {
@@ -313,11 +336,11 @@ const render = (): ((s: State) => void) => {
             });
             svg.appendChild(dimRect);
 
-            // Game over image
-            const goW = Math.floor(Viewport.CANVAS_WIDTH * 1.5);
+            // Result image (win or game over)
+            const goW = Math.floor(Viewport.CANVAS_WIDTH * 0.9);
             const goH = Math.floor(Viewport.CANVAS_HEIGHT * 0.8);
             const gameOverImg = createSvgElement(svg.namespaceURI, "image", {
-                href: "assets/game-over.png",
+                href: s.won ? "assets/winning.png" : "assets/gameover.png",
                 x: `${(Viewport.CANVAS_WIDTH - goW) / 2}`,
                 y: `${Viewport.CANVAS_HEIGHT * 0.3 - goH / 2}`,
                 width: `${goW}`,
@@ -327,10 +350,10 @@ const render = (): ((s: State) => void) => {
             svg.appendChild(gameOverImg);
 
             // Replay button image
-            const rpW = Math.floor(Viewport.CANVAS_WIDTH * 1.2);
-            const rpH = Math.floor(Viewport.CANVAS_HEIGHT * 0.4);
+            const rpW = Math.floor(Viewport.CANVAS_WIDTH * 0.8);
+            const rpH = Math.floor(Viewport.CANVAS_HEIGHT * 0.15);
             const replayBtn = createSvgElement(svg.namespaceURI, "image", {
-                href: "assets/replay-btn.png",
+                href: "assets/restart.png",
                 x: `${(Viewport.CANVAS_WIDTH - rpW) / 2}`,
                 y: `${Viewport.CANVAS_HEIGHT * 0.75 - rpH / 2}`,
                 width: `${rpW}`,
@@ -356,6 +379,7 @@ export const state$ = (csvContents: string): Observable<State> => {
     const initialGameState: State = {
         ...initialState,
         pipes: pipeData,
+        totalPipes: pipeData.length,
     };
 
     type Reducer = (s: State) => State;
@@ -376,12 +400,36 @@ export const state$ = (csvContents: string): Observable<State> => {
                     Viewport.CANVAS_HEIGHT - Birb.HEIGHT / 2,
                 );
 
-                const updatedPipes = s.pipes
-                    .map(pipe => ({
-                        ...pipe,
-                        x: pipe.x - Constants.PIPE_SPEED,
-                    }))
-                    .filter(pipe => pipe.x > -Constants.PIPE_WIDTH);
+                // Move pipes
+                const movedPipes = s.pipes.map(pipe => ({
+                    ...pipe,
+                    x: pipe.x - Constants.PIPE_SPEED,
+                }));
+                const updatedPipes = movedPipes.filter(
+                    pipe => pipe.x > -Constants.PIPE_WIDTH,
+                );
+
+                // Score & pipe collision using center-line rule to avoid PNG margins:
+                // When the bird passes the center x of a pipe pair, check if its
+                // center y is within the gap. If yes -> score+1; otherwise -> collision.
+                let addedScore = 0;
+                let pipeCenterCollision = false;
+                const scoredPipes = updatedPipes.map(p => {
+                    const pipeCenterX = p.x + Constants.PIPE_WIDTH / 2;
+                    const justPassed = !p.scored && pipeCenterX < s.bird.x;
+                    if (justPassed) {
+                        const gapTop = p.gapY - p.gapHeight / 2;
+                        const gapBottom = p.gapY + p.gapHeight / 2;
+                        const insideGap =
+                            clampedY >= gapTop && clampedY <= gapBottom;
+                        if (insideGap) {
+                            addedScore += 1;
+                        } else {
+                            pipeCenterCollision = true;
+                        }
+                    }
+                    return justPassed ? { ...p, scored: true } : p;
+                });
 
                 // Collision detection (bird as rectangle)
                 const birdX = s.bird.x - Birb.WIDTH / 2;
@@ -394,49 +442,8 @@ export const state$ = (csvContents: string): Observable<State> => {
                     clampedY <= Birb.HEIGHT / 2 ||
                     clampedY >= Viewport.CANVAS_HEIGHT - Birb.HEIGHT / 2;
 
-                // Pipes collision
-                if (!collided) {
-                    for (const p of updatedPipes) {
-                        const topH = Math.max(0, p.gapY - p.gapHeight / 2);
-                        const bottomY = p.gapY + p.gapHeight / 2;
-                        const bottomH = Math.max(
-                            0,
-                            Viewport.CANVAS_HEIGHT - bottomY,
-                        );
-
-                        // top pipe rect after vertical flip group occupies [0, topH] at x=p.x
-                        const topHit =
-                            topH > 0 &&
-                            rectsIntersect(
-                                birdX,
-                                birdY,
-                                birdW,
-                                birdH,
-                                p.x,
-                                0,
-                                Constants.PIPE_WIDTH,
-                                topH,
-                            );
-
-                        const bottomHit =
-                            bottomH > 0 &&
-                            rectsIntersect(
-                                birdX,
-                                birdY,
-                                birdW,
-                                birdH,
-                                p.x,
-                                bottomY,
-                                Constants.PIPE_WIDTH,
-                                bottomH,
-                            );
-
-                        if (topHit || bottomHit) {
-                            collided = true;
-                            break;
-                        }
-                    }
-                }
+                // Pipes collision: use center-line collision result only (avoids PNG margins)
+                if (!collided && pipeCenterCollision) collided = true;
 
                 // Handle lives with cooldown
                 const nextCooldown = Math.max(0, s.hitCooldown - 1);
@@ -447,6 +454,10 @@ export const state$ = (csvContents: string): Observable<State> => {
                     nextCooldownOut = Constants.HIT_COOLDOWN_TICKS;
                 }
 
+                const newScore = s.score + addedScore;
+                const allPassed =
+                    newScore >= 20 || scoredPipes.every(p => p.scored);
+
                 const nextState: State = {
                     ...s,
                     gameTime: s.gameTime + 1,
@@ -455,10 +466,16 @@ export const state$ = (csvContents: string): Observable<State> => {
                         y: clampedY,
                         velocity: nextLives === 0 ? 0 : newVelocity,
                     },
-                    pipes: updatedPipes,
+                    pipes: scoredPipes,
                     lives: nextLives,
                     hitCooldown: nextCooldownOut,
-                    gameEnd: nextLives === 0 ? true : s.gameEnd,
+                    damageTicks:
+                        collided && nextCooldown === 0
+                            ? Constants.DAMAGE_TICKS
+                            : Math.max(0, s.damageTicks - 1),
+                    score: newScore,
+                    gameEnd: nextLives === 0 ? true : s.gameEnd || allPassed,
+                    won: nextLives > 0 && allPassed ? true : s.won,
                 };
 
                 return nextState;

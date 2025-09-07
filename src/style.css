@@ -1,5 +1,6 @@
 :root {
-    background-color: rgb(161, 161, 161);
+    /* Use a background image for the whole page outside the game area */
+    background: url("../assets/back.png") center/cover fixed no-repeat;
     padding: 2em;
     padding-top: 4em;
 }
@@ -48,7 +49,7 @@ h1 {
 }
 
 main {
-    background-color: rgb(238, 238, 238);
+    background-color: rgba(238, 238, 238, 0.85);
     border-radius: 0.25em;
     box-shadow: 0em 0em 0.5em rgb(20, 20, 20);
     flex-wrap: wrap;
