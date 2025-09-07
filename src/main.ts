@@ -71,6 +71,13 @@ type Bird = Readonly<{
     velocity: number;
 }>;
 
+type Ghost = Readonly<{
+    x: number;
+    y: number;
+    velocity: number;
+    dead?: boolean; // for filtering out ghosts that died last run
+}>;
+
 type Pipe = Readonly<{
     id: number;
     x: number;
@@ -85,7 +92,7 @@ type State = Readonly<{
     gameEnd: boolean;
     won: boolean;
     bird: Bird;
-    ghosts?: readonly Bird[]; // all ghost birds (non-interactive)
+    ghosts?: readonly Ghost[]; // all ghost birds (non-interactive)
     pipes: readonly Pipe[];
     lives: number;
     score: number;
@@ -303,17 +310,23 @@ const render = (): ((s: State) => void) => {
 
         // Add ghosts (semi-transparent, non-interactive)
         if (s.ghosts && s.ghosts.length) {
-            s.ghosts.forEach(g => {
-                const ghostImg = createSvgElement(svg.namespaceURI, "image", {
-                    href: "assets/birb.png",
-                    x: `${s.bird.x - Birb.WIDTH / 2}`,
-                    y: `${g.y - Birb.HEIGHT / 2}`,
-                    width: `${Birb.WIDTH}`,
-                    height: `${Birb.HEIGHT}`,
-                    opacity: "0.35",
+            s.ghosts
+                .filter(g => !g.dead) // filter out ghosts that died last run
+                .forEach(g => {
+                    const ghostImg = createSvgElement(
+                        svg.namespaceURI,
+                        "image",
+                        {
+                            href: "assets/birb.png",
+                            x: `${s.bird.x - Birb.WIDTH / 2}`,
+                            y: `${g.y - Birb.HEIGHT / 2}`,
+                            width: `${Birb.WIDTH}`,
+                            height: `${Birb.HEIGHT}`,
+                            opacity: "0.35",
+                        },
+                    );
+                    svg.appendChild(ghostImg);
                 });
-                svg.appendChild(ghostImg);
-            });
         }
 
         // Add bird
@@ -503,6 +516,11 @@ export const state$ = (csvContents: string): Observable<State> => {
                     won: nextLives > 0 && allPassed ? true : s.won,
                 };
 
+                // Record endTick once when the game ends this frame
+                if (!s.gameEnd && nextState.gameEnd) {
+                    (window as any).__lastGameEndTick = nextState.gameTime;
+                }
+
                 return nextState;
             },
         ),
@@ -564,15 +582,40 @@ export const state$ = (csvContents: string): Observable<State> => {
         ? tick$.pipe(
               map(
                   (): Reducer => (s: State) => {
-                      const ghosts = s.ghosts ?? [];
-                      const nextGhosts = ghosts.map(g => {
+                      if (s.gameEnd) return s;
+                      const needed = allTickLists ? allTickLists.length : 0;
+                      const startArr = (window as any).__allRunStartYs as
+                          | number[]
+                          | undefined;
+                      const endArr = (window as any).__allRunEndTicks as
+                          | number[]
+                          | undefined;
+                      const baseGhosts: Bird[] =
+                          s.ghosts && s.ghosts.length
+                              ? ([...s.ghosts] as Bird[])
+                              : Array.from({ length: needed }, (_, i) => ({
+                                    x: s.bird.x,
+                                    y:
+                                        startArr?.[i] ??
+                                        Viewport.CANVAS_HEIGHT / 2,
+                                    velocity: 0,
+                                }));
+                      const nextGhosts = baseGhosts.map((g, i) => {
+                          const endTick = endArr?.[i];
+                          if (
+                              typeof endTick === "number" &&
+                              s.gameTime >= endTick
+                          ) {
+                              // hide corpse for the very first run as well
+                              return { ...g, dead: true } as Ghost;
+                          }
                           const v = g.velocity + Constants.GRAVITY;
                           const y = clamp(
                               g.y + v,
                               Birb.HEIGHT / 2,
                               Viewport.CANVAS_HEIGHT - Birb.HEIGHT / 2,
                           );
-                          return { ...g, y, velocity: v } as Bird;
+                          return { ...g, y, velocity: v } as Ghost;
                       });
                       return { ...s, ghosts: nextGhosts };
                   },
@@ -584,19 +627,28 @@ export const state$ = (csvContents: string): Observable<State> => {
         ? ghostFlap$.pipe(
               map(({ idx }) => (s: State) => {
                   const needed = allTickLists ? allTickLists.length : 0;
-                  const baseGhosts: Bird[] =
+                  const startArr = (window as any).__allRunStartYs as
+                      | number[]
+                      | undefined;
+                  const endArr = (window as any).__allRunEndTicks as
+                      | number[]
+                      | undefined;
+                  const baseGhosts: Ghost[] =
                       s.ghosts && s.ghosts.length
-                          ? ([...s.ghosts] as Bird[])
-                          : Array.from({ length: needed }, () => ({
+                          ? ([...s.ghosts] as Ghost[])
+                          : Array.from({ length: needed }, (_, i) => ({
                                 x: s.bird.x,
-                                y: Viewport.CANVAS_HEIGHT / 2,
+                                y: startArr?.[i] ?? Viewport.CANVAS_HEIGHT / 2,
                                 velocity: 0,
                             }));
                   if (idx >= 0 && idx < baseGhosts.length) {
-                      baseGhosts[idx] = {
-                          ...baseGhosts[idx],
-                          velocity: Constants.JUMP_VELOCITY,
-                      };
+                      const endTick = endArr?.[idx];
+                      if (typeof endTick !== "number" || s.gameTime < endTick) {
+                          baseGhosts[idx] = {
+                              ...baseGhosts[idx],
+                              velocity: Constants.JUMP_VELOCITY,
+                          };
+                      }
                   }
                   return { ...s, ghosts: baseGhosts };
               }),
@@ -746,5 +798,21 @@ if (typeof window !== "undefined") {
             : all
               ? [...all, arr]
               : [arr];
+        // record startY and endTick for ghosts
+        const startY = (window as any).__currentRunStartY as number | undefined;
+        if (startY !== undefined) {
+            const ys =
+                ((window as any).__allRunStartYs as number[] | undefined) || [];
+            ys.push(startY);
+            (window as any).__allRunStartYs = ys;
+        }
+        const endTick = (window as any).__lastGameEndTick as number | undefined;
+        if (endTick !== undefined) {
+            const ends =
+                ((window as any).__allRunEndTicks as number[] | undefined) ||
+                [];
+            ends.push(endTick);
+            (window as any).__allRunEndTicks = ends;
+        }
     });
 }

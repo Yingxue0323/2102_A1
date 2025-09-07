@@ -5,15 +5,19 @@
     </head>
     <body>
         <div id="splash">
-            <img src="./assets/fly1.webp" class="fade" />
-            <img src="./assets/fly2.webp" class="fade" />
-            <img src="./assets/fly3.webp" class="fade" />
-            <img src="./assets/fly4.webp" class="fade" />
-            <img id="skipBtn" src="./assets/skip-btn.png" alt="Skip" />
+            <img src="/assets/fly1.webp" class="fade" />
+            <img src="/assets/fly2.webp" class="fade" />
+            <img src="/assets/fly3.webp" class="fade" />
+            <img src="/assets/fly4.webp" class="fade" />
+            <img id="skipBtn" src="/assets/skip-btn.png" alt="Skip" />
         </div>
 
-        <img id="logo" src="./assets/logo.png" alt="Flappy Birb" style="height:100px" />
-        <main id="main" class="flex col">
+        <img id="logo" src="/assets/logo.png" alt="Flappy Birb" style="height:100px; margin-bottom:20px" />
+        <div class="text" style="margin-bottom: 20px">
+            <span >Press SPACE to flap, press ENTER to pause</span>
+        </div>
+        
+        <main id="main" class="flex row">
             <svg id="svgCanvas" width="600" height="400">
                 <g id="gameOver" visibility="hidden">
                     <rect
@@ -39,6 +43,6 @@
                 </div>
             </div>
         </main>
-        <script type="module" src="./src/main.ts"></script>
+        <script type="module" src="/src/main.ts"></script>
     </body>
 </html>
