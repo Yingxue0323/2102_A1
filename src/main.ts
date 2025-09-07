@@ -48,6 +48,8 @@ const Constants = {
     GRAVITY: 0.5,
     JUMP_VELOCITY: -7,
     TICK_RATE_MS: 30,
+    /** Hit cooldown in ticks to prevent draining all lives in a single overlap */
+    HIT_COOLDOWN_TICKS: 30,
 } as const;
 
 // User input
@@ -70,6 +72,7 @@ type Pipe = Readonly<{
     time: number;
 }>;
 
+// FRP State: the single immutable source of truth that evolves over time
 type State = Readonly<{
     gameEnd: boolean;
     bird: Bird;
@@ -77,6 +80,7 @@ type State = Readonly<{
     lives: number;
     score: number;
     gameTime: number;
+    hitCooldown: number; // ticks remaining until next life can be lost
 }>;
 
 const initialState: State = {
@@ -90,11 +94,25 @@ const initialState: State = {
     lives: 3,
     score: 0,
     gameTime: 0,
+    hitCooldown: 0,
 };
 
 /** Utility: clamp value to [min, max] */
 const clamp = (value: number, min: number, max: number): number =>
     Math.max(min, Math.min(max, value));
+
+/** Axis-aligned rectangle intersection */
+const rectsIntersect = (
+    ax: number,
+    ay: number,
+    aw: number,
+    ah: number,
+    bx: number,
+    by: number,
+    bw: number,
+    bh: number,
+): boolean =>
+    !(ax + aw <= bx || bx + bw <= ax || ay + ah <= by || by + bh <= ay);
 
 /**
  * Parses CSV content and converts it to pipe data
@@ -282,11 +300,44 @@ const render = (): ((s: State) => void) => {
         if (livesText) livesText.textContent = s.lives.toString();
         if (scoreText) scoreText.textContent = s.score.toString();
 
-        // Show game over if needed
+        // Game Over overlay with replay button
         if (s.gameEnd) {
-            show(gameOver);
-        } else {
-            hide(gameOver);
+            // Dim the scene
+            const dimRect = createSvgElement(svg.namespaceURI, "rect", {
+                x: "0",
+                y: "0",
+                width: `${Viewport.CANVAS_WIDTH}`,
+                height: `${Viewport.CANVAS_HEIGHT}`,
+                fill: "black",
+                opacity: "0.45",
+            });
+            svg.appendChild(dimRect);
+
+            // Game over image
+            const goW = Math.floor(Viewport.CANVAS_WIDTH * 1.5);
+            const goH = Math.floor(Viewport.CANVAS_HEIGHT * 0.8);
+            const gameOverImg = createSvgElement(svg.namespaceURI, "image", {
+                href: "assets/game-over.png",
+                x: `${(Viewport.CANVAS_WIDTH - goW) / 2}`,
+                y: `${Viewport.CANVAS_HEIGHT * 0.3 - goH / 2}`,
+                width: `${goW}`,
+                height: `${goH}`,
+                id: "gameOverImg",
+            });
+            svg.appendChild(gameOverImg);
+
+            // Replay button image
+            const rpW = Math.floor(Viewport.CANVAS_WIDTH * 1.2);
+            const rpH = Math.floor(Viewport.CANVAS_HEIGHT * 0.4);
+            const replayBtn = createSvgElement(svg.namespaceURI, "image", {
+                href: "assets/replay-btn.png",
+                x: `${(Viewport.CANVAS_WIDTH - rpW) / 2}`,
+                y: `${Viewport.CANVAS_HEIGHT * 0.75 - rpH / 2}`,
+                width: `${rpW}`,
+                height: `${rpH}`,
+                id: "replayBtn",
+            });
+            svg.appendChild(replayBtn);
         }
     };
 };
@@ -313,6 +364,8 @@ export const state$ = (csvContents: string): Observable<State> => {
     const physics$: Observable<Reducer> = tick$.pipe(
         map(
             (): Reducer => (s: State) => {
+                // Freeze world when game has ended
+                if (s.gameEnd) return s;
                 const newVelocity = s.bird.velocity + Constants.GRAVITY;
                 const newY = s.bird.y + newVelocity;
 
@@ -330,12 +383,85 @@ export const state$ = (csvContents: string): Observable<State> => {
                     }))
                     .filter(pipe => pipe.x > -Constants.PIPE_WIDTH);
 
-                return {
+                // Collision detection (bird as rectangle)
+                const birdX = s.bird.x - Birb.WIDTH / 2;
+                const birdY = clampedY - Birb.HEIGHT / 2;
+                const birdW = Birb.WIDTH;
+                const birdH = Birb.HEIGHT;
+
+                // Screen bounds collision (top/bottom)
+                let collided =
+                    clampedY <= Birb.HEIGHT / 2 ||
+                    clampedY >= Viewport.CANVAS_HEIGHT - Birb.HEIGHT / 2;
+
+                // Pipes collision
+                if (!collided) {
+                    for (const p of updatedPipes) {
+                        const topH = Math.max(0, p.gapY - p.gapHeight / 2);
+                        const bottomY = p.gapY + p.gapHeight / 2;
+                        const bottomH = Math.max(
+                            0,
+                            Viewport.CANVAS_HEIGHT - bottomY,
+                        );
+
+                        // top pipe rect after vertical flip group occupies [0, topH] at x=p.x
+                        const topHit =
+                            topH > 0 &&
+                            rectsIntersect(
+                                birdX,
+                                birdY,
+                                birdW,
+                                birdH,
+                                p.x,
+                                0,
+                                Constants.PIPE_WIDTH,
+                                topH,
+                            );
+
+                        const bottomHit =
+                            bottomH > 0 &&
+                            rectsIntersect(
+                                birdX,
+                                birdY,
+                                birdW,
+                                birdH,
+                                p.x,
+                                bottomY,
+                                Constants.PIPE_WIDTH,
+                                bottomH,
+                            );
+
+                        if (topHit || bottomHit) {
+                            collided = true;
+                            break;
+                        }
+                    }
+                }
+
+                // Handle lives with cooldown
+                const nextCooldown = Math.max(0, s.hitCooldown - 1);
+                let nextLives = s.lives;
+                let nextCooldownOut = nextCooldown;
+                if (collided && nextCooldown === 0) {
+                    nextLives = Math.max(0, s.lives - 1);
+                    nextCooldownOut = Constants.HIT_COOLDOWN_TICKS;
+                }
+
+                const nextState: State = {
                     ...s,
                     gameTime: s.gameTime + 1,
-                    bird: { ...s.bird, y: clampedY, velocity: newVelocity },
+                    bird: {
+                        ...s.bird,
+                        y: clampedY,
+                        velocity: nextLives === 0 ? 0 : newVelocity,
+                    },
                     pipes: updatedPipes,
+                    lives: nextLives,
+                    hitCooldown: nextCooldownOut,
+                    gameEnd: nextLives === 0 ? true : s.gameEnd,
                 };
+
+                return nextState;
             },
         ),
     );
@@ -343,10 +469,16 @@ export const state$ = (csvContents: string): Observable<State> => {
     // Flap: immediate upward velocity
     const flapReducer$: Observable<Reducer> = flap$.pipe(
         map(
-            (): Reducer => (s: State) => ({
-                ...s,
-                bird: { ...s.bird, velocity: Constants.JUMP_VELOCITY },
-            }),
+            (): Reducer => (s: State) =>
+                s.gameEnd
+                    ? s
+                    : {
+                          ...s,
+                          bird: {
+                              ...s.bird,
+                              velocity: Constants.JUMP_VELOCITY,
+                          },
+                      },
         ),
     );
 
@@ -378,8 +510,49 @@ if (typeof window !== "undefined") {
         }),
     );
 
-    // Observable: wait for first user click
-    const click$ = fromEvent(document.body, "mousedown").pipe(take(1));
+    // Draw start screen (background + start button in the main area)
+    const svgEl = document.querySelector("#svgCanvas") as SVGSVGElement;
+    const drawStartScreen = () => {
+        if (!svgEl) return;
+        svgEl.innerHTML = "";
+        const bg = createSvgElement(svgEl.namespaceURI, "image", {
+            href: "assets/bg.jpg",
+            x: "0",
+            y: "0",
+            width: `${Viewport.CANVAS_WIDTH}`,
+            height: `${Viewport.CANVAS_HEIGHT}`,
+            preserveAspectRatio: "xMidYMid slice",
+        });
+        svgEl.appendChild(bg);
+        // Dim the scene before game starts
+        const dimRect = createSvgElement(svgEl.namespaceURI, "rect", {
+            x: "0",
+            y: "0",
+            width: `${Viewport.CANVAS_WIDTH}`,
+            height: `${Viewport.CANVAS_HEIGHT}`,
+            fill: "black",
+            opacity: "0.45",
+        });
+        svgEl.appendChild(dimRect);
+        const w = 180;
+        const h = 60;
+        const startBtn = createSvgElement(svgEl.namespaceURI, "image", {
+            href: "assets/start-btn.png",
+            x: `${(Viewport.CANVAS_WIDTH - w) / 2}`,
+            y: `${Viewport.CANVAS_HEIGHT * 0.5 - h / 2}`,
+            width: `${w}`,
+            height: `${h}`,
+            id: "startBtn",
+        });
+        svgEl.appendChild(startBtn);
+    };
+    drawStartScreen();
+
+    // Observable: wait for clicking the start button
+    const click$ = fromEvent<MouseEvent>(svgEl, "mousedown").pipe(
+        filter(e => (e.target as Element).id === "startBtn"),
+        take(1),
+    );
 
     csv$.pipe(
         switchMap(contents =>
@@ -387,4 +560,9 @@ if (typeof window !== "undefined") {
             click$.pipe(switchMap(() => state$(contents))),
         ),
     ).subscribe(render());
+
+    // Replay listener: reload page when clicking replay button
+    fromEvent<MouseEvent>(svgEl, "mousedown")
+        .pipe(filter(e => (e.target as Element).id === "replayBtn"))
+        .subscribe(() => window.location.reload());
 }
