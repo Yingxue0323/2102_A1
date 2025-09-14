@@ -65,17 +65,9 @@ const Constants = {
     GRAVITY: 0.5,
     JUMP_VELOCITY: -5,
     TICK_RATE_MS: 30,
-    /** Hit cooldown in ticks to prevent draining all lives in a single overlap */
-    HIT_COOLDOWN_TICKS: 30,
-    /** How long to show the damage indicator after losing a life (ticks) */
-    DAMAGE_TICKS: 30,
+    HIT_COOLDOWN_TICKS: 30, // prevent draining all lives in a single overlap
+    DAMAGE_TICKS: 30, // how long to show the damage indicator after losing a life
 } as const;
-
-// User input
-
-type Key = "Space";
-
-// State processing
 
 type Bird = Readonly<{
     x: number;
@@ -110,10 +102,11 @@ type State = Readonly<{
     score: number;
     gameTime: number;
     hitCooldown: number; // ticks remaining until next life can be lost
-    totalPipes: number; // total number of pipe pairs in level
+    totalPipes: number;
     damageTicks: number; // ticks remaining to show -hp indicator
 }>;
 
+// Initial game state
 const initialState: State = {
     gameEnd: false,
     won: false,
@@ -126,27 +119,27 @@ const initialState: State = {
     lives: 3,
     score: 0,
     gameTime: 0,
-    hitCooldown: 0,
+    hitCooldown: 0, // remaining ticks until next life can be lost
     totalPipes: 0,
-    damageTicks: 0,
+    damageTicks: 0, // ticks remaining to show -hp indicator
 };
 
-/** Utility: clamp value to [min, max] */
+// Utility: clamp value to [min, max]
 const clamp = (value: number, min: number, max: number): number =>
     Math.max(min, Math.min(max, value));
 
-/** Axis-aligned rectangle intersection */
-const rectsIntersect = (
-    ax: number,
-    ay: number,
-    aw: number,
-    ah: number,
-    bx: number,
-    by: number,
-    bw: number,
-    bh: number,
-): boolean =>
-    !(ax + aw <= bx || bx + bw <= ax || ay + ah <= by || by + bh <= ay);
+// Axis-aligned rectangle intersection
+// const rectsIntersect = (
+//     ax: number,
+//     ay: number,
+//     aw: number,
+//     ah: number,
+//     bx: number,
+//     by: number,
+//     bw: number,
+//     bh: number,
+// ): boolean =>
+//     !(ax + aw <= bx || bx + bw <= ax || ay + ah <= by || by + bh <= ay);
 
 /**
  * Parses CSV content and converts it to pipe data
@@ -177,7 +170,7 @@ const parsePipeData = (csvContent: string): readonly Pipe[] => {
  * @param s Current state
  * @returns Updated state
  */
-const tick = (s: State) => s;
+// const tick = (s: State) => s;
 
 // Rendering (side effects)
 
@@ -227,6 +220,7 @@ const createSvgElement = (
     return elem;
 };
 
+// View renderer: subscribe to state and draw SVG each frame.
 const render = (): ((s: State) => void) => {
     // Canvas elements
     const gameOver = document.querySelector("#gameOver") as SVGElement;
@@ -251,6 +245,7 @@ const render = (): ((s: State) => void) => {
      * @param s Current state
      */
     return (s: State) => {
+        // here we only read and paint(side effects)
         // Clear previous frame
         svg.innerHTML = "";
 
@@ -365,11 +360,11 @@ const render = (): ((s: State) => void) => {
             svg.appendChild(dmgImg);
         }
 
-        // Update UI
+        // Update text fields after damage
         if (livesText) livesText.textContent = s.lives.toString();
         if (scoreText) scoreText.textContent = s.score.toString();
 
-        // Game Over / Win overlay with replay button
+        // GameOver/Win overlay with replay button
         if (s.gameEnd) {
             // Dim the scene
             const dimRect = createSvgElement(svg.namespaceURI, "rect", {
@@ -382,7 +377,7 @@ const render = (): ((s: State) => void) => {
             });
             svg.appendChild(dimRect);
 
-            // Result image (win or game over)
+            // Result (win or game over)
             const goW = Math.floor(Viewport.CANVAS_WIDTH * 0.9);
             const goH = Math.floor(Viewport.CANVAS_HEIGHT * 0.8);
             const gameOverImg = createSvgElement(svg.namespaceURI, "image", {
@@ -395,7 +390,7 @@ const render = (): ((s: State) => void) => {
             });
             svg.appendChild(gameOverImg);
 
-            // Replay button image
+            // Replay button
             const rpW = Math.floor(Viewport.CANVAS_WIDTH * 0.8);
             const rpH = Math.floor(Viewport.CANVAS_HEIGHT * 0.15);
             const replayBtn = createSvgElement(svg.namespaceURI, "image", {
@@ -434,7 +429,7 @@ export const state$ = (csvContents: string): Observable<State> => {
 
     type Reducer = (s: State) => State;
 
-    // Physics tick: gravity integration, position update, pipe scrolling.
+    // Physics: gravity integration, position update, pipe scrolling, scoring & collision.
     const physics$: Observable<Reducer> = tick$.pipe(
         map(
             (): Reducer => (s: State) => {
@@ -459,15 +454,14 @@ export const state$ = (csvContents: string): Observable<State> => {
                     pipe => pipe.x > -Constants.PIPE_WIDTH,
                 );
 
-                // Score & pipe collision using center-line rule to avoid PNG margins:
-                // When the bird passes the center x of a pipe pair, check if its
-                // center y is within the gap. If yes -> score+1; otherwise -> collision.
+                // center-line rule to avoid PNG margins
                 let addedScore = 0;
                 let pipeCenterCollision = false;
                 const scoredPipes = updatedPipes.map(p => {
                     const pipeCenterX = p.x + Constants.PIPE_WIDTH / 2;
-                    const justPassed = !p.scored && pipeCenterX < s.bird.x;
+                    const justPassed = !p.scored && pipeCenterX < s.bird.x; // x-axis
                     if (justPassed) {
+                        // y-axis
                         const gapTop = p.gapY - p.gapHeight / 2;
                         const gapBottom = p.gapY + p.gapHeight / 2;
                         const insideGap =
@@ -482,17 +476,16 @@ export const state$ = (csvContents: string): Observable<State> => {
                 });
 
                 // Collision detection (bird as rectangle)
-                const birdX = s.bird.x - Birb.WIDTH / 2;
-                const birdY = clampedY - Birb.HEIGHT / 2;
-                const birdW = Birb.WIDTH;
-                const birdH = Birb.HEIGHT;
+                // const birdX = s.bird.x - Birb.WIDTH / 2;
+                // const birdY = clampedY - Birb.HEIGHT / 2;
+                // const birdW = Birb.WIDTH;
+                // const birdH = Birb.HEIGHT;
 
                 // Screen bounds collision (top/bottom)
                 let collided =
                     clampedY <= Birb.HEIGHT / 2 ||
                     clampedY >= Viewport.CANVAS_HEIGHT - Birb.HEIGHT / 2;
 
-                // Pipes collision: use center-line collision result only (avoids PNG margins)
                 if (!collided && pipeCenterCollision) collided = true;
 
                 // Handle lives with cooldown
@@ -504,6 +497,7 @@ export const state$ = (csvContents: string): Observable<State> => {
                     nextCooldownOut = Constants.HIT_COOLDOWN_TICKS;
                 }
 
+                // Update score
                 const newScore = s.score + addedScore;
                 const allPassed =
                     newScore >= 20 || scoredPipes.every(p => p.scored);
@@ -538,13 +532,6 @@ export const state$ = (csvContents: string): Observable<State> => {
         ),
     );
 
-    // Flap: immediate upward velocity
-    const flapReducer$: Observable<Reducer> = flap$.pipe(
-        withLatestFrom(tickIndex$),
-        share(),
-        map(([_, __]) => undefined as unknown as never), // placeholder to keep types simple
-    );
-
     // Ghost support: capture current run's flap ticks
     const currentRunFlapTicks$ = flap$.pipe(
         withLatestFrom(tickIndex$),
@@ -552,7 +539,7 @@ export const state$ = (csvContents: string): Observable<State> => {
         share(),
     );
 
-    // Player flap reducer (separate from ghost capture)
+    // Player flap reducer
     const playerFlapReducer$: Observable<Reducer> = flap$.pipe(
         map(
             (): Reducer => (s: State) =>
@@ -568,28 +555,23 @@ export const state$ = (csvContents: string): Observable<State> => {
         ),
     );
 
-    // Accumulate: merge reducer streams and fold over time (scan)
-    // Merge player reducers (physics + player flaps)
-    const player$ = merge(physics$, playerFlapReducer$).pipe(
-        scan((s, reducer) => reducer(s), initialGameState),
-    );
-
-    // Build ghost flap streams from all previous runs in this app session
     const allTickLists = (window as any).__allRunFlapTicksArrays as
         | number[][]
         | undefined;
+    // ghost streams from all previous runs in this app session
     const ghostStreams: Observable<{ idx: number }>[] = (
         allTickLists || []
     ).map((list, idx) =>
         tickIndex$.pipe(
             filter(i => list.includes(i)),
-            map(() => ({ idx })),
+            map(() => ({ idx })), // emit the index of the ghost to flap
         ),
     );
     const ghostFlap$ = ghostStreams.length ? merge(...ghostStreams) : EMPTY;
-    const hasGhost = ghostStreams.length > 0;
 
+    const hasGhost = ghostStreams.length > 0;
     // Ghost state: integrate the same physics, driven by ghostFlap$ impulses
+    // Ghosts are visual only, we dont mutate player state here
     const ghostReducerPhysics$: Observable<Reducer> = hasGhost
         ? tick$.pipe(
               map(
@@ -602,6 +584,8 @@ export const state$ = (csvContents: string): Observable<State> => {
                       const endArr = (window as any).__allRunEndTicks as
                           | number[]
                           | undefined;
+
+                      // get the base ghosts
                       const baseGhosts: Bird[] =
                           s.ghosts && s.ghosts.length
                               ? ([...s.ghosts] as Bird[])
@@ -612,6 +596,7 @@ export const state$ = (csvContents: string): Observable<State> => {
                                         Viewport.CANVAS_HEIGHT / 2,
                                     velocity: 0,
                                 }));
+                      // update the ghosts
                       const nextGhosts = baseGhosts.map((g, i) => {
                           const endTick = endArr?.[i];
                           if (
@@ -635,6 +620,7 @@ export const state$ = (csvContents: string): Observable<State> => {
           )
         : EMPTY;
 
+    // ghost flap: apply a jump only to the targeted ghost index
     const ghostReducerFlap$: Observable<Reducer> = hasGhost
         ? ghostFlap$.pipe(
               map(({ idx }) => (s: State) => {
@@ -686,6 +672,7 @@ export const state$ = (csvContents: string): Observable<State> => {
     return withGhost$;
 };
 
+// ----------------------------------------------------------------------
 // The following simply runs your main function on window load.  Make sure to leave it in place.
 // You should not need to change this, beware if you are.
 if (typeof window !== "undefined") {
@@ -722,6 +709,7 @@ if (typeof window !== "undefined") {
             preserveAspectRatio: "xMidYMid slice",
         });
         svgEl.appendChild(bg);
+
         // Dim the scene before game starts
         const dimRect = createSvgElement(svgEl.namespaceURI, "rect", {
             x: "0",
@@ -732,6 +720,8 @@ if (typeof window !== "undefined") {
             opacity: "0.45",
         });
         svgEl.appendChild(dimRect);
+
+        // start button
         const w = 180;
         const h = 60;
         const startBtn = createSvgElement(svgEl.namespaceURI, "image", {
@@ -754,8 +744,10 @@ if (typeof window !== "undefined") {
         if (game) game.style.display = "block";
     };
     const splashTimeout = window.setTimeout(endSplash, 6000);
-    const skipBtn = document.getElementById("skipBtn") as HTMLElement | null;
+    // skip button
+    const skipBtn = document.getElementById("skipBtn") as HTMLElement | null; // not always present
     if (skipBtn) {
+        // if present, add click handler
         skipBtn.addEventListener("click", () => {
             clearTimeout(splashTimeout);
             endSplash();
@@ -765,51 +757,55 @@ if (typeof window !== "undefined") {
     // Streams: start once, restart many times
     const start$ = fromEvent<MouseEvent>(svgEl, "mousedown").pipe(
         filter(e => (e.target as Element).id === "startBtn"),
-        take(1),
+        take(1), // only activate once, then complete and unsubscribe
     );
     const restart$ = fromEvent<MouseEvent>(svgEl, "mousedown").pipe(
         filter(e => (e.target as Element).id === "replayBtn"),
     );
+    // merge start and restart events into a single stream
     const session$ = merge(start$, restart$);
 
     // Render subscription - pure render only
     csv$.pipe(
+        // new csv -> new stream
+        // start/restart -> new state
         switchMap(contents => session$.pipe(switchMap(() => state$(contents)))),
     ).subscribe(render());
 
-    // Append current run ticks once per session end (dedup to avoid多次追加)
+    // Append current run ticks once per session end
     csv$.pipe(
         switchMap(contents =>
             session$.pipe(
                 switchMap(() =>
                     state$(contents).pipe(
-                        filter(s => s.gameEnd),
+                        filter(s => s.gameEnd), // only cares about game end
                         take(1),
                         map(
                             () =>
                                 (window as any)
-                                    .__currentRunFlapTicksArray as number[],
+                                    .__currentRunFlapTicksArray as number[], // get from global
                         ),
-                        filter(arr => Array.isArray(arr) && arr.length > 0),
+                        filter(arr => Array.isArray(arr) && arr.length > 0), // protective check
                     ),
                 ),
             ),
         ),
     ).subscribe(arr => {
-        const all = (window as any).__allRunFlapTicksArrays as
+        const all = (window as any).__allRunFlapTicksArrays as  // get from global
             | number[][]
             | undefined;
-        const exists =
+        const exists = // avoid duplicates
             all?.some(
                 old =>
                     old.length === arr.length &&
                     old.every((v, i) => v === arr[i]),
-            ) ?? false;
-        (window as any).__allRunFlapTicksArrays = exists
-            ? all
-            : all
-              ? [...all, arr]
-              : [arr];
+            ) ?? false; // if it's undefined
+        (window as any).__allRunFlapTicksArrays = exists // update global
+            ? all // dup exists, return the old one
+            : all // dup not exists
+              ? [...all, arr] // arr exists, add the new one
+              : [arr]; // arr not exists, create a new array
+
         // record startY and endTick for ghosts
         const startY = (window as any).__currentRunStartY as number | undefined;
         if (startY !== undefined) {
